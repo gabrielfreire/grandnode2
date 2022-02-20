@@ -19,23 +19,38 @@ using System.Text;
 using System.Threading.Tasks;
 using Grand.Api.Queries.Models.Common;
 using System.Text.RegularExpressions;
+using Grand.Domain.Catalog;
+using Grand.Business.Catalog.Interfaces.Products;
+using Grand.Api.Extensions;
+using Grand.Domain.Common;
 
 namespace Grand.Plugin.Api.Extended.Controllers
 {
     [SwaggerTag("Api Extended")]
     public partial class AliExpressController : BaseODataController
     {
+        private readonly IProductAttributeService _productAttributeService;
         private readonly IMediator _mediator;
+        private readonly IProductService _productService;
         private readonly IPermissionService _permissionService;
 
         public AliExpressController(
-            IPermissionService permissionService, 
-            IMediator mediator)
+            IPermissionService permissionService,
+            IMediator mediator,
+            IProductService productService, 
+            IProductAttributeService productAttributeService)
         {
             _permissionService = permissionService;
             _mediator = mediator;
+            _productService = productService;
+            _productAttributeService = productAttributeService;
         }
 
+        /// <summary>
+        /// Returns a product from AliExpress by ID
+        /// </summary>
+        /// <param name="key"></param>
+        /// <returns></returns>
         [SwaggerOperation(summary: "Get product from AliExpress by ID", OperationId = "GetProductById")]
         [HttpGet("Products/{key}")]
         [ProducesResponseType((int)HttpStatusCode.NotFound)]
@@ -53,88 +68,238 @@ namespace Grand.Plugin.Api.Extended.Controllers
             return Ok(product);
         }
 
+        /// <summary>
+        /// Adds a product from AliExpress to the Store using AliExpress product ID
+        /// </summary>
+        /// <param name="key"></param>
+        /// <returns></returns>
         [SwaggerOperation(summary: "Adds a product from AliExpress to the Store", OperationId = "AddAliExpressProduct")]
-        [HttpPost("Products/{key}/AddAliExpressProduct")]
+        [HttpPost("Products/{aliExpressProductId}/AddAliExpressProduct")]
         [ProducesResponseType((int)HttpStatusCode.Forbidden)]
         [ProducesResponseType((int)HttpStatusCode.OK)]
-        public async Task<IActionResult> Post(string key)
+        public async Task<IActionResult> Post(
+            string aliExpressProductId,
+            [FromQuery] string[] categoriesId
+            )
         {
             if (!await _permissionService.Authorize(PermissionSystemName.Orders))
                 return Forbid();
-            
+
             // get aliexpress product
-            var aliExpressProduct = await AliExpressScraper.GetProductById(decimal.Parse(key));
+            var aliExpressProduct = await AliExpressScraper.GetProductById(decimal.Parse(aliExpressProductId));
+            
+            // category validation
+            // TODO: create a validator
+            if (categoriesId.Length == 0)
+            {
+                var categoriesToAdd = new List<string>();
+                string parentCategoryId = null;
+                // we store categories from aliExpress in our store if they don't exist already
+                foreach(var aliProdCategory in aliExpressProduct.ProductCategories)
+                {
+                   
+                    var existingCategory = await _mediator.Send(new GetQuery<CategoryDto>());
+                    if (existingCategory.Any(c => c.Name == aliProdCategory.Name))
+                    {
+                        if (aliProdCategory.Name == aliExpressProduct.ProductCategories.Last().Name)
+                        {
+                            categoriesToAdd.Add(existingCategory.FirstOrDefault(c => c.Name == aliProdCategory.Name).Id);
+                        }
+                    }
+                    else
+                    {
+                        var newCategoryAddedFromAliExpress = await _mediator.Send(new AddCategoryCommand() 
+                        {
+                            Model = new CategoryDto() 
+                            { 
+                                Name = aliProdCategory.Name, 
+                                ParentCategoryId = parentCategoryId,
+                                CategoryLayoutId = KnownIds.CATEGORY_LAYOUT_GRID_OR_LINES,
+                                Published = true,
+                                DisplayOrder = 1,
+                                ExternalId = aliProdCategory.Id.ToString(),
+                                FeaturedProductsOnHomePage = false,
+                                IncludeInMenu = true
+                            }
+                        });
+
+                        if (newCategoryAddedFromAliExpress != null)
+                        {
+                            parentCategoryId = newCategoryAddedFromAliExpress.Id;
+                            categoriesToAdd.Clear(); // only add the latest category
+                            categoriesToAdd.Add(newCategoryAddedFromAliExpress.Id);
+                        }
+                        else
+                            parentCategoryId = null;
+                    }
+                }
+                categoriesId = categoriesToAdd.ToArray();
+            }
+            else
+            {
+                foreach(var cateId in categoriesId)
+                {
+                    var cat = await _mediator.Send(new GetQuery<CategoryDto>() { Id = cateId });
+                    if (!cat.Any())
+                        return NotFound($"Category Id {cateId} was not found");
+                }
+            }
+                
+            // end validation
+
 
             // convert to productDto
-            var product = await _mediator.Send(new AddProductCommand() { Model = aliExpressProduct.ToProductDto() });
+            var productDto = await _mediator.Send(new AddProductCommand() { Model = aliExpressProduct.ToProductDto() });
 
-            if (product != null)
+            if (productDto != null)
             {
-                // create pictures and add to productDto
-                var _addedPictures = await CreatePicturesAndAddToProduct(aliExpressProduct.Images, product);
-
-                // add product attributes to productDto
-                if (aliExpressProduct.Variants.Options.Any(o => o.Name == "Color"))
+                // add categories
+                foreach(var cateId in categoriesId)
                 {
-                    var colorOption = aliExpressProduct.Variants.Options.FirstOrDefault(o => o.Name == "Color");
-                    var colorOptionImagesUrls = colorOption.Values.Select(v => v.ImagePath).ToList();
-                    
-                    var colorOptionPictureDtos = await CreatePicturesAndAddToProduct(colorOptionImagesUrls, product);
-                    var productAttributeMappingDto = new Grand.Api.DTOs.Catalog.ProductAttributeMappingDto() {
-                        AttributeControlTypeId = Domain.Catalog.AttributeControlType.ImageSquares,
-                        ProductAttributeId = "621026006e254b2d02acf4b1",
-                        IsRequired = true,
-                        DisplayOrder = 0,
-                        ProductAttributeValues = new List<ProductAttributeValueDto>()
-                    };
-                    var displayOrder = 0;
-                    foreach(var val in colorOption.Values)
-                    {
-                        var attrValueDto = new ProductAttributeValueDto();
-                        attrValueDto.Name = val.Name;
-                        attrValueDto.PictureId = colorOptionPictureDtos.FirstOrDefault(p => p.AltAttribute == val.ImagePath).Id;
-                        attrValueDto.DisplayOrder = displayOrder;
-                        displayOrder++;
-                        attrValueDto.Quantity = 1;
-
-                        productAttributeMappingDto.ProductAttributeValues.Add(attrValueDto);
-                    }
-                    await _mediator.Send(new AddProductAttributeMappingCommand() {
-                        Product = product,
-                        Model = productAttributeMappingDto
+                    await _mediator.Send(new AddProductCategoryCommand() {
+                        Product = productDto,
+                        Model = new ProductCategoryDto() 
+                        {
+                            CategoryId = cateId,
+                            IsFeaturedProduct = false
+                        }
                     });
                 }
-                if (aliExpressProduct.Variants.Options.Any(o => o.Name == "Shoe Size"))
+
+                // add User fields
+                var product = productDto.ToEntity();
+                product.UserFields.Add(new Domain.Common.UserField() 
                 { 
-                    var productAttributeMappingDto = new Grand.Api.DTOs.Catalog.ProductAttributeMappingDto() {
-                        AttributeControlTypeId = Domain.Catalog.AttributeControlType.DropdownList,
-                        ProductAttributeId = "621026006e254b2d02acf4b7",
+                    Key = "AliExpressProductUrl",
+                    Value = $"https://www.aliexpress.com/item/{aliExpressProductId}.html" 
+                });
+                product.UserFields.Add(new Domain.Common.UserField() {
+                    Key = "AliExpressProductId",
+                    Value = $"{aliExpressProductId}"
+                });
+                
+                await _productService.UpdateProduct(product);
+
+                // create pictures and add to productDto
+                var _addedPictures = await CreatePicturesAndAddToProduct(aliExpressProduct.Images, productDto);
+                
+                // add product attributes to productDto
+                var _options = aliExpressProduct.Variants.Options;
+                var _attributeMappingDisplayOrder = 1;
+                foreach (var option in _options)
+                {
+                    // default to size
+                    var _productAttrId = KnownIds.PRODUCT_ATTRIBUTE_ID_SIZE; // size
+                    var _productAttrControlTypeId = AttributeControlType.DropdownList;
+                    var _pictureId = string.Empty;
+                    var _pictureDtos = new List<PictureDto>();
+                    // color attr mapping
+                    if (option.Name.ToLowerInvariant().Contains(KnownAliExpressAttrNames.Color))
+                    {
+                        _productAttrId = KnownIds.PRODUCT_ATTRIBUTE_ID_COLOR;
+                        _productAttrControlTypeId = AttributeControlType.ImageSquares;
+                        var colorOptionImagesUrls = option.Values.Select(v => v.ImagePath).ToList();
+                        _pictureDtos = await CreatePicturesAndAddToProduct(colorOptionImagesUrls, productDto);
+                    }
+                    // size attr mapping
+                    else if (option.Name.ToLowerInvariant().Contains(KnownAliExpressAttrNames.Size))
+                    {
+                        _productAttrId = KnownIds.PRODUCT_ATTRIBUTE_ID_SIZE;
+                    }
+
+                    var productAttributeMappingDto = new ProductAttributeMappingDto() {
+                        AttributeControlTypeId = _productAttrControlTypeId,
+                        ProductAttributeId = _productAttrId,
                         IsRequired = true,
-                        DisplayOrder = 1,
+                        DisplayOrder = _attributeMappingDisplayOrder,
                         ProductAttributeValues = new List<ProductAttributeValueDto>()
                     };
-                    var displayOrder = 0;
-                    var option = aliExpressProduct.Variants.Options
-                                .FirstOrDefault(o => o.Name == "Shoe Size");
-                    foreach (var val in option.Values)
+
+                    // add attr mapping values
+                    var _optionValueDisplayOrder = 1;
+
+                    foreach(var val in option.Values)
                     {
                         var attrValueDto = new ProductAttributeValueDto();
-                        attrValueDto.Name = val.Name;
-                        attrValueDto.DisplayOrder = displayOrder;
-                        displayOrder++;
+                        attrValueDto.Name = val.DisplayName;
+                        attrValueDto.PictureId = _pictureDtos.Count > 0 ? 
+                            _pictureDtos.FirstOrDefault(p => p.AltAttribute == val.ImagePath)?.Id :
+                            null;
+                        attrValueDto.DisplayOrder = _optionValueDisplayOrder;
                         attrValueDto.Quantity = 1;
                         productAttributeMappingDto.ProductAttributeValues.Add(attrValueDto);
-                    }
-                    await _mediator.Send(new AddProductAttributeMappingCommand() {
-                        Product = product,
-                        Model = productAttributeMappingDto
-                    });
-                    
 
+                        _optionValueDisplayOrder++;
+
+                    }
+
+                    // save mapping to database
+                    var attrMapping = SaveProductAttribute(productAttributeMappingDto, productDto.Id);
+                    _attributeMappingDisplayOrder++;
+                }
+
+                // add product attr combinations
+                var productWithAttributes = (await _mediator.Send(new GetQuery<ProductDto>() { Id = productDto.Id })).FirstOrDefault();
+                var prices = aliExpressProduct.Variants.Prices;
+                foreach (var price in prices)
+                {
+                    var option1 = _options.FirstOrDefault(o => o.Values.Any(v => v.Id == decimal.Parse( price.OptionValueId1 )));
+                    var option2 = _options.FirstOrDefault(o => o.Values.Any(v => v.Id == decimal.Parse( price.OptionValueId2 )));
+
+                    var value1 = option1.Values.FirstOrDefault(v => v.Id == decimal.Parse(price.OptionValueId1));
+                    var value2 = option2.Values.FirstOrDefault(v => v.Id == decimal.Parse(price.OptionValueId2));
+
+                    var valueWithImage = value1.ImagePath != null ? value1 : 
+                            value2.ImagePath != null ? value2 : null;
+
+                    var productAttributeMappingInDto1 = productWithAttributes.ProductAttributeMappings
+                        .Where(p => p.ProductAttributeValues.Any(v => v.Name == value1.DisplayName)).FirstOrDefault();
+                    var productAttributeValueInDto1 = productWithAttributes.ProductAttributeMappings
+                        .SelectMany(p => p.ProductAttributeValues).Where(v => v.Name == value1.DisplayName).FirstOrDefault();
+
+                    var productAttributeMappingInDto2 = productWithAttributes.ProductAttributeMappings
+                        .Where(p => p.ProductAttributeValues.Any(v => v.Name == value2.DisplayName)).FirstOrDefault();
+                    var productAttributeValueInDto2 = productWithAttributes.ProductAttributeMappings
+                        .SelectMany(p => p.ProductAttributeValues).Where(v => v.Name == value2.DisplayName).FirstOrDefault();
+                    
+                    var pictureId = valueWithImage != null ? productWithAttributes.ProductAttributeMappings
+                            .FirstOrDefault(p => p.ProductAttributeId == KnownIds.PRODUCT_ATTRIBUTE_ID_COLOR)
+                            .ProductAttributeValues.FirstOrDefault(v => v.Name == valueWithImage.DisplayName).PictureId : null;
+
+                    if (productAttributeMappingInDto1 != null &&
+                        productAttributeMappingInDto2 != null &&
+                        productAttributeValueInDto1 != null &&
+                        productAttributeValueInDto2 != null)
+                    {
+
+                        var combination = new ProductAttributeCombination() {
+                            PictureId = pictureId,
+                            StockQuantity = int.Parse(price.AvailableQuantity.ToString()),
+                            OverriddenPrice = double.Parse(price.SalePrice.ToString()),
+                            Attributes = new List<CustomAttribute>() 
+                            {
+                                new CustomAttribute()
+                                { 
+                                    Key = productAttributeMappingInDto1.Id, 
+                                    Value = productAttributeValueInDto1.Id
+                                },
+                                new CustomAttribute()
+                                {
+                                    Key = productAttributeMappingInDto2.Id,
+                                    Value = productAttributeValueInDto2.Id
+                                }
+                            }
+                        };
+
+                        if (combination != null)
+                        {
+                            await SaveProductCombination(combination, productDto.Id);
+                        }
+                    }
                 }
             }
 
-            return Ok((await _mediator.Send(new GetQuery<ProductDto>() { Id = product.Id })).FirstOrDefault());
+            return Ok((await _mediator.Send(new GetQuery<ProductDto>() { Id = productDto.Id })).FirstOrDefault());
         }
 
         private async Task<List<PictureDto>> CreatePicturesAndAddToProduct(List<string> imagesUrl, ProductDto product)
@@ -184,6 +349,18 @@ namespace Grand.Plugin.Api.Extended.Controllers
             }
 
             return _addedPictureDtos;
+        }
+
+        private async Task<ProductAttributeMappingDto> SaveProductAttribute(ProductAttributeMappingDto dto, string productId)
+        {
+            var productAttributeMapping = dto.ToEntity();
+            productAttributeMapping.Combination = true;
+            await _productAttributeService.InsertProductAttributeMapping(productAttributeMapping, productId);
+            return productAttributeMapping.ToModel();
+        }
+        private async Task SaveProductCombination(ProductAttributeCombination entity, string productId)
+        {
+            await _productAttributeService.InsertProductAttributeCombination(entity, productId);
         }
     }
 }

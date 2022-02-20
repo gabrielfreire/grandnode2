@@ -14,14 +14,19 @@ namespace Grand.Plugin.Api.Extended.Extensions
         public static ProductDto ToProductDto(this AliExpressProduct aliExpressProduct)
         {
             var dto = new ProductDto();
+            
             dto.FullDescription = aliExpressProduct.Description;
             dto.Name = aliExpressProduct.Title;
             dto.MetaTitle = aliExpressProduct.Title;
             dto.ProductTypeId = ProductType.SimpleProduct;
-            dto.ProductLayoutId = "621026006e254b2d02acf47f"; // Simple Layout
+            dto.ProductLayoutId = KnownIds.PRODUCT_LAYOUT_ID_SIMPLE_LAYOUT; // Simple Layout
+            dto.OrderMaximumQuantity = 999999;
+            dto.OrderMinimumQuantity = 1;
+            dto.AvailableForPreOrder = false;
             dto.AllowCustomerReviews = true;
             dto.ShowOnHomePage = false;
             dto.Published = false;
+            dto.ManageInventoryMethodId = ManageInventoryMethod.ManageStockByAttributes;
             dto.Price = double.Parse( aliExpressProduct.OriginalPrice.Min.ToString() );
             dto.CatalogPrice = double.Parse(aliExpressProduct.SalePrice.Min.ToString() );
             dto.MinEnteredPrice = double.Parse(aliExpressProduct.SalePrice.Min.ToString());

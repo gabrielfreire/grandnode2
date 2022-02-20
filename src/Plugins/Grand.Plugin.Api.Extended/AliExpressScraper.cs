@@ -35,13 +35,16 @@ namespace Grand.Plugin.Api.Extended
                 Id = productId,
                 Title = (string)data["titleModule"]["subject"],
                 ActionCategoryId = (decimal)data["actionModule"]["categoryId"],
-                ProductCategory = data["crossLinkModule"]["breadCrumbPathList"].Select(l => new AliProductCategory
-                {
-                    Id = (decimal)l["cateId"],
-                    Name = (string)l["name"],
-                    Target = (string)l["target"],
-                    Url = (string)l["url"]
-                }).Last(),
+                ProductCategories = data["crossLinkModule"]["breadCrumbPathList"]
+                    .Where(l => (decimal)l["cateId"] != 0)
+                    .OrderBy(l => (decimal)l["cateId"])
+                    .Select(l => new AliProductCategory
+                    {
+                        Id = (decimal)l["cateId"],
+                        Name = (string)l["name"],
+                        Target = (string)l["target"],
+                        Url = (string)l["url"]
+                    }).ToList(),
                 TotalAvailableQuantity = (decimal) data["quantityModule"]["totalAvailQuantity"],
                 Orders = (decimal)data["titleModule"]["tradeCount"],
                 DescriptionUrl = descriptionUrl.ToString(),

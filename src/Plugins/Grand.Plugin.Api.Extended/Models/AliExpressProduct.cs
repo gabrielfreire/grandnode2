@@ -11,7 +11,7 @@ namespace Grand.Plugin.Api.Extended.Models
         public decimal Id { get; set; }
         public string Title { get; set; }
         public decimal ActionCategoryId { get; set; }
-        public AliProductCategory ProductCategory { get; set; }
+        public List<AliProductCategory> ProductCategories { get; set; } = new List<AliProductCategory>();
         public decimal TotalAvailableQuantity { get; set; }
         public decimal Orders { get; set; }
         public string DescriptionUrl { get; set; }
@@ -81,6 +81,8 @@ namespace Grand.Plugin.Api.Extended.Models
         public decimal Id { get; set; }
         public decimal AvailableQuantity { get; set; }
         public string OptionValueIds{ get; set; }
+        public string OptionValueId1 { get => !string.IsNullOrEmpty( OptionValueIds ) ? OptionValueIds.Split(",")[0] : String.Empty; }
+        public string OptionValueId2 { get => !string.IsNullOrEmpty( OptionValueIds ) ? OptionValueIds.Split(",")[1] : String.Empty; }
         public decimal OriginalPrice { get; set; }
         public decimal SalePrice { get; set; }
     }
