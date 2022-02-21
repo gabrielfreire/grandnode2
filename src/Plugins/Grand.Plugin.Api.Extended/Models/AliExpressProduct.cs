@@ -23,6 +23,21 @@ namespace Grand.Plugin.Api.Extended.Models
         public AliProductPrice OriginalPrice { get; set; }
         public AliProductPrice SalePrice { get; set; }
         public AliProductVariant Variants { get; set; }
+
+        public AliVariantOption GetOptionByValueId(string valueId)
+        {
+            return Variants.Options.FirstOrDefault(o => o.Values.Any(v => v.Id == decimal.Parse(valueId)));
+        }
+        public OptionValue GetOptionValueById(string valueId)
+        {
+            return Variants.Options.SelectMany(o => o.Values).FirstOrDefault(o => o.Id == decimal.Parse(valueId));
+        }
+        public AliVariantPrice GetPriceValueByOptionValueId(string valueId)
+        {
+            return Variants.Prices.FirstOrDefault(p => p.OptionValueIds == valueId);
+        }
+
+        public bool HasMultipleVariants() => Variants.Prices.Any(p => p.OptionValueIds.Split(",").Length > 1);
     }
 
     public class AliProductCategory
@@ -81,8 +96,10 @@ namespace Grand.Plugin.Api.Extended.Models
         public decimal Id { get; set; }
         public decimal AvailableQuantity { get; set; }
         public string OptionValueIds{ get; set; }
-        public string OptionValueId1 { get => !string.IsNullOrEmpty( OptionValueIds ) ? OptionValueIds.Split(",")[0] : String.Empty; }
-        public string OptionValueId2 { get => !string.IsNullOrEmpty( OptionValueIds ) ? OptionValueIds.Split(",")[1] : String.Empty; }
+        public string OptionValueId1 { get => !string.IsNullOrEmpty( OptionValueIds ) ? 
+                OptionValueIds.Split(",").Length > 0 ? OptionValueIds.Split(",")[0] : string.Empty : string.Empty; }
+        public string OptionValueId2 { get => !string.IsNullOrEmpty( OptionValueIds ) ? 
+                OptionValueIds.Split(",").Length > 1 ? OptionValueIds.Split(",")[1] : string.Empty : string.Empty; }
         public decimal OriginalPrice { get; set; }
         public decimal SalePrice { get; set; }
     }
