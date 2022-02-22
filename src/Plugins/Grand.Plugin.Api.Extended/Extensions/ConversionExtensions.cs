@@ -27,6 +27,8 @@ namespace Grand.Plugin.Api.Extended.Extensions
             dto.ShowOnHomePage = false;
             dto.Published = false;
             dto.ManageInventoryMethodId = ManageInventoryMethod.ManageStockByAttributes;
+            
+            dto.ProductCost = double.Parse( aliExpressProduct.OriginalPrice.Min.ToString() );
             dto.Price = double.Parse( aliExpressProduct.OriginalPrice.Min.ToString() );
             dto.CatalogPrice = double.Parse(aliExpressProduct.SalePrice.Min.ToString() );
             dto.MinEnteredPrice = double.Parse(aliExpressProduct.SalePrice.Min.ToString());

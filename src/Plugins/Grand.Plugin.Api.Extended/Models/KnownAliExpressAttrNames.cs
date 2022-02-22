@@ -10,5 +10,6 @@ namespace Grand.Plugin.Api.Extended.Models
     {
         public const string Color = "color";
         public const string Size = "size";
+        public const string Ships = "ships";
     }
 }

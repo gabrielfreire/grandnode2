@@ -23,6 +23,7 @@ using Grand.Domain.Catalog;
 using Grand.Business.Catalog.Interfaces.Products;
 using Grand.Api.Extensions;
 using Grand.Domain.Common;
+using Serilog;
 
 namespace Grand.Plugin.Api.Extended.Controllers
 {
@@ -114,9 +115,9 @@ namespace Grand.Plugin.Api.Extended.Controllers
                     Key = "AliExpressProductId",
                     Value = $"{aliExpressProductId}"
                 });
-                
-                await _productService.UpdateProduct(product);
 
+                await _productService.UpdateProduct(product);
+                
                 // create pictures and add to productDto
                 await CreatePicturesAndAddToProduct(aliExpressProduct.Images, productDto);
                 productDto = (await _mediator.Send(new GetQuery<ProductDto>() { Id = productDto.Id })).FirstOrDefault();
@@ -211,31 +212,37 @@ namespace Grand.Plugin.Api.Extended.Controllers
                 using var response = await http.GetAsync(img);
                 response.EnsureSuccessStatusCode();
 
-                var pictureBytes = await response.Content.ReadAsByteArrayAsync();
                 try
                 {
-                    var pictureDto = await _mediator.Send(new AddPictureCommand() {
-                        PictureDto = new Grand.Api.DTOs.Common.PictureDto() {
-                            PictureBinary = pictureBytes,
-                            AltAttribute = img,
-                            MimeType = "image/jpeg"
-                        }
-                    });
-                    if (pictureDto != null)
+                    var pictureBytes = await response.Content.ReadAsByteArrayAsync();
+
+                    if (pictureBytes != null && pictureBytes.Length > 0)
                     {
-                        await _mediator.Send(new AddProductPictureCommand() {
-                            Product = productDto,
-                            Model = new Grand.Api.DTOs.Catalog.ProductPictureDto() {
-                                DisplayOrder = order,
-                                PictureId = pictureDto.Id
+                        var pictureDto = await _mediator.Send(new AddPictureCommand() {
+                            PictureDto = new Grand.Api.DTOs.Common.PictureDto() {
+                                PictureBinary = pictureBytes,
+                                AltAttribute = img,
+                                MimeType = "image/jpeg"
                             }
                         });
-                        _addedPictureDtos.Add(pictureDto);
-                        order++;
+                        if (pictureDto != null)
+                        {
+                            await _mediator.Send(new AddProductPictureCommand() {
+                                Product = productDto,
+                                Model = new Grand.Api.DTOs.Catalog.ProductPictureDto() {
+                                    DisplayOrder = order,
+                                    PictureId = pictureDto.Id
+                                }
+                            });
+                            _addedPictureDtos.Add(pictureDto);
+                            order++;
+                        }
                     }
 
                 }
-                catch (Exception ex) { }
+                catch (Exception ex) {
+                    Log.Fatal(ex, ex.ToString());
+                }
             }
 
             return _addedPictureDtos;
@@ -264,6 +271,21 @@ namespace Grand.Plugin.Api.Extended.Controllers
                 else if (option.Name.ToLowerInvariant().Contains(KnownAliExpressAttrNames.Size))
                 {
                     _productAttrId = KnownIds.PRODUCT_ATTRIBUTE_ID_SIZE;
+                }
+                // ship from attr mapping
+                else if (option.Name.ToLowerInvariant().Contains(KnownAliExpressAttrNames.Ships))
+                {
+                    _productAttrId = KnownIds.PRODUCT_ATTRIBUTE_ID_SHIPS;
+                }
+                // create new attr to use
+                else
+                {
+                    var _productAttr = new ProductAttribute() {
+                        Name = option.Name,
+                        SeName = option.Name.ToLowerInvariant()
+                    };
+                    await _productAttributeService.InsertProductAttribute(_productAttr);
+                    _productAttrId = _productAttr.Id;
                 }
 
                 var productAttributeMappingDto = new ProductAttributeMappingDto() {
