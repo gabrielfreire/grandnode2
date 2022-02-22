@@ -119,8 +119,8 @@ namespace Grand.Plugin.Api.Extended.Controllers
 
                 // create pictures and add to productDto
                 await CreatePicturesAndAddToProduct(aliExpressProduct.Images, productDto);
-                // add product attributes to productDto
                 productDto = (await _mediator.Send(new GetQuery<ProductDto>() { Id = productDto.Id })).FirstOrDefault();
+                // add product attributes to productDto
                 productDto = await CreateProductAttributeMappingFromAliExpressVariants(aliExpressProduct, productDto);
                 // add product attr combinations
                 productDto = await CreateProductAttributeCombinationsFromAttributeMappings(aliExpressProduct, productDto);
@@ -205,6 +205,7 @@ namespace Grand.Plugin.Api.Extended.Controllers
             var _addedPictureDtos = new List<PictureDto>();
 
             // create images in the Store
+            var order = 1;
             foreach (var img in imagesUrl)
             {
                 using var response = await http.GetAsync(img);
@@ -221,28 +222,20 @@ namespace Grand.Plugin.Api.Extended.Controllers
                         }
                     });
                     if (pictureDto != null)
+                    {
+                        await _mediator.Send(new AddProductPictureCommand() {
+                            Product = productDto,
+                            Model = new Grand.Api.DTOs.Catalog.ProductPictureDto() {
+                                DisplayOrder = order,
+                                PictureId = pictureDto.Id
+                            }
+                        });
                         _addedPictureDtos.Add(pictureDto);
+                        order++;
+                    }
 
                 }
                 catch (Exception ex) { }
-            }
-
-            // add images to product
-            if (_addedPictureDtos.Count > 0)
-            {
-                var order = 0;
-                foreach (var addedPicture in _addedPictureDtos)
-                {
-
-                    await _mediator.Send(new AddProductPictureCommand() {
-                        Product = productDto,
-                        Model = new Grand.Api.DTOs.Catalog.ProductPictureDto() {
-                            DisplayOrder = order,
-                            PictureId = addedPicture.Id
-                        }
-                    });
-                    order++;
-                }
             }
 
             return _addedPictureDtos;
