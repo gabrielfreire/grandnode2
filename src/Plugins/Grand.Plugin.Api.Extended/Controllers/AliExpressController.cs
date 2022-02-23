@@ -80,7 +80,9 @@ namespace Grand.Plugin.Api.Extended.Controllers
         [ProducesResponseType((int)HttpStatusCode.OK)]
         public async Task<IActionResult> Post(
             string aliExpressProductId,
-            [FromQuery] string[] categoriesId
+            [FromQuery] string[] categoriesId,
+            [FromQuery] bool publish = false,
+            [FromQuery] bool showOnHomePage = false
             )
         {
             if (!await _permissionService.Authorize(PermissionSystemName.Orders))
@@ -90,7 +92,9 @@ namespace Grand.Plugin.Api.Extended.Controllers
             var aliExpressProduct = await AliExpressScraper.GetProductById(decimal.Parse(aliExpressProductId));
             
             // convert to productDto and add to database
-            var productDto = await _mediator.Send(new AddProductCommand() { Model = aliExpressProduct.ToProductDto() });
+            var productDto = await _mediator.Send(new AddProductCommand() { 
+                Model = aliExpressProduct.ToProductDto(publish, showOnHomePage) 
+            });
 
             if (productDto != null)
             {
@@ -307,6 +311,9 @@ namespace Grand.Plugin.Api.Extended.Controllers
                     var attrValueDto = new ProductAttributeValueDto();
                     attrValueDto.Name = val.DisplayName;
                     attrValueDto.PictureId = _pictureDtos.Count > 0 ?
+                        _pictureDtos.FirstOrDefault(p => p.AltAttribute == val.ImagePath)?.Id :
+                        null;
+                    attrValueDto.ImageSquaresPictureId = _pictureDtos.Count > 0 ?
                         _pictureDtos.FirstOrDefault(p => p.AltAttribute == val.ImagePath)?.Id :
                         null;
                     attrValueDto.DisplayOrder = _optionValueDisplayOrder;

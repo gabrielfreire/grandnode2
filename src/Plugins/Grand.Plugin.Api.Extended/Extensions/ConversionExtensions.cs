@@ -11,7 +11,7 @@ namespace Grand.Plugin.Api.Extended.Extensions
 {
     public static class ConversionExtensions
     {
-        public static ProductDto ToProductDto(this AliExpressProduct aliExpressProduct)
+        public static ProductDto ToProductDto(this AliExpressProduct aliExpressProduct, bool publish = false, bool showOnHomePage = false)
         {
             var dto = new ProductDto();
             
@@ -24,8 +24,8 @@ namespace Grand.Plugin.Api.Extended.Extensions
             dto.OrderMinimumQuantity = 1;
             dto.AvailableForPreOrder = false;
             dto.AllowCustomerReviews = true;
-            dto.ShowOnHomePage = false;
-            dto.Published = false;
+            dto.ShowOnHomePage = showOnHomePage;
+            dto.Published = publish;
             dto.ManageInventoryMethodId = ManageInventoryMethod.ManageStockByAttributes;
             
             dto.ProductCost = double.Parse( aliExpressProduct.OriginalPrice.Min.ToString() );
