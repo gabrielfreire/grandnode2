@@ -24,6 +24,7 @@ using Grand.Business.Catalog.Interfaces.Products;
 using Grand.Api.Extensions;
 using Grand.Domain.Common;
 using Serilog;
+using Grand.Business.Catalog.Interfaces.Categories;
 
 namespace Grand.Plugin.Api.Extended.Controllers
 {
@@ -38,7 +39,7 @@ namespace Grand.Plugin.Api.Extended.Controllers
         public AliExpressController(
             IPermissionService permissionService,
             IMediator mediator,
-            IProductService productService, 
+            IProductService productService,
             IProductAttributeService productAttributeService)
         {
             _permissionService = permissionService;
@@ -69,6 +70,44 @@ namespace Grand.Plugin.Api.Extended.Controllers
             return Ok(product);
         }
 
+        [SwaggerOperation(summary: "Adds a bunch of products from AliExpress to the Store by category id and name", OperationId = "AddAliExpressProductsByCategoryIdAndName")]
+        [HttpPost("Products/AddAliExpressProductsByCategoryIdAndName")]
+        [ProducesResponseType((int)HttpStatusCode.Forbidden)]
+        [ProducesResponseType((int)HttpStatusCode.OK)]
+        public async Task<IActionResult> AddAliExpressProductsByCategoryIdAndName(
+            [FromQuery] string categoryId,
+            [FromQuery] string categoryName,
+            [FromQuery] bool publish = false
+            )
+        {
+            if (!await _permissionService.Authorize(PermissionSystemName.Orders))
+                return Forbid();
+
+            var aliExpressProducts = await AliExpressScraper.ListProductsByCategoryIdAndName(categoryId, categoryName);
+
+            var products = new List<Product>();
+
+            foreach(var aliProd in aliExpressProducts)
+            {
+                Log.Information($"Adding AliExpress prod '{aliProd.Title}' to store");
+                try
+                {
+                    products.Add(
+                        await CreateProductFromAliExpressProduct(
+                            aliProd,
+                            publish,
+                            false,
+                            1, 
+                            new string[]{ }));
+                }
+                catch (Exception ex)
+                {
+                    Log.Fatal(ex, ex.ToString());
+                }
+            }
+
+            return Ok(products.Select(p => p.Id).ToList());
+        }
         /// <summary>
         /// Adds a product from AliExpress to the Store using AliExpress product ID
         /// </summary>
@@ -78,11 +117,12 @@ namespace Grand.Plugin.Api.Extended.Controllers
         [HttpPost("Products/{aliExpressProductId}/AddAliExpressProduct")]
         [ProducesResponseType((int)HttpStatusCode.Forbidden)]
         [ProducesResponseType((int)HttpStatusCode.OK)]
-        public async Task<IActionResult> Post(
+        public async Task<IActionResult> AddAliExpressProduct(
             string aliExpressProductId,
             [FromQuery] string[] categoriesId,
             [FromQuery] bool publish = false,
-            [FromQuery] bool showOnHomePage = false
+            [FromQuery] bool showOnHomePage = false,
+            [FromQuery] int displayOrder = 1
             )
         {
             if (!await _permissionService.Authorize(PermissionSystemName.Orders))
@@ -92,49 +132,53 @@ namespace Grand.Plugin.Api.Extended.Controllers
             var aliExpressProduct = await AliExpressScraper.GetProductById(decimal.Parse(aliExpressProductId));
             
             // convert to productDto and add to database
-            var productDto = await _mediator.Send(new AddProductCommand() { 
-                Model = aliExpressProduct.ToProductDto(publish, showOnHomePage) 
-            });
+            var product = await CreateProductFromAliExpressProduct(aliExpressProduct, publish, showOnHomePage, displayOrder, categoriesId);
 
-            if (productDto != null)
+            return Ok(product.ToModel());
+        }
+
+        private async Task<Product> CreateProductFromAliExpressProduct(
+            AliExpressProduct aliExpressProduct, 
+            bool publish, 
+            bool showOnHomePage, 
+            int displayOrder, 
+            string[] categoriesId)
+        {
+            var productDto = aliExpressProduct.ToProductDto(publish, showOnHomePage, displayOrder);
+            productDto = await _mediator.Send(new AddProductCommand() {
+                Model = productDto
+            });
+            var product = productDto.ToEntity();
+
+            if (product != null)
             {
                 // add aliexpress categories to store and insert them into the product
-                try
-                {
-                    productDto = await CreateCategoriesAndAddToProduct(aliExpressProduct, categoriesId, productDto);
-                }
-                catch (InvalidOperationException ex)
-                {
-                    return NotFound();
-                }
-
+                product = await CreateCategoriesAndAddToProduct(aliExpressProduct, categoriesId, product);
+                
                 // add User fields
-                var product = productDto.ToEntity();
-                product.UserFields.Add(new Domain.Common.UserField() 
-                { 
+                product.UserFields.Add(new Domain.Common.UserField() {
                     Key = "AliExpressProductUrl",
-                    Value = $"https://www.aliexpress.com/item/{aliExpressProductId}.html" 
+                    Value = $"https://www.aliexpress.com/item/{aliExpressProduct.Id}.html"
                 });
                 product.UserFields.Add(new Domain.Common.UserField() {
                     Key = "AliExpressProductId",
-                    Value = $"{aliExpressProductId}"
+                    Value = $"{aliExpressProduct.Id}"
                 });
 
-                await _productService.UpdateProduct(product);
-                
-                // create pictures and add to productDto
-                await CreatePicturesAndAddToProduct(aliExpressProduct.Images, productDto);
-                productDto = (await _mediator.Send(new GetQuery<ProductDto>() { Id = productDto.Id })).FirstOrDefault();
-                // add product attributes to productDto
-                productDto = await CreateProductAttributeMappingFromAliExpressVariants(aliExpressProduct, productDto);
-                // add product attr combinations
-                productDto = await CreateProductAttributeCombinationsFromAttributeMappings(aliExpressProduct, productDto);
-                
-            }
+                await _productService.UpdateProduct((Product)product);
 
-            return Ok((await _mediator.Send(new GetQuery<ProductDto>() { Id = productDto.Id })).FirstOrDefault());
+                // create pictures and add to productDto
+                await CreatePicturesAndAddToProduct(aliExpressProduct.Images, product);
+                product = await _productService.GetProductById(product.Id);
+                // add product attributes to productDto
+                product = await CreateProductAttributeMappingFromAliExpressVariants(aliExpressProduct, product);
+                // add product attr combinations
+                product = await CreateProductAttributeCombinationsFromAttributeMappings(aliExpressProduct, product);
+
+            }
+            return product;
         }
-        private async Task<ProductDto> CreateCategoriesAndAddToProduct(AliExpressProduct aliExpressProduct, string[] categoriesId, ProductDto productDto)
+        private async Task<Product> CreateCategoriesAndAddToProduct(AliExpressProduct aliExpressProduct, string[] categoriesId, Product product)
         {
             // category creation
             if (categoriesId.Length == 0)
@@ -194,17 +238,17 @@ namespace Grand.Plugin.Api.Extended.Controllers
             foreach (var cateId in categoriesId)
             {
                 await _mediator.Send(new AddProductCategoryCommand() {
-                    Product = productDto,
+                    Product = product.ToModel(),
                     Model = new ProductCategoryDto() {
                         CategoryId = cateId,
                         IsFeaturedProduct = false
                     }
                 });
             }
-            return (await _mediator.Send(new GetQuery<ProductDto>() { Id = productDto.Id })).FirstOrDefault();
+            return await _productService.GetProductById(product.Id);
         }
 
-        private async Task<List<PictureDto>> CreatePicturesAndAddToProduct(List<string> imagesUrl, ProductDto productDto)
+        private async Task<List<PictureDto>> CreatePicturesAndAddToProduct(List<string> imagesUrl, Product product)
         {
             using var http = new HttpClient();
             var _addedPictureDtos = new List<PictureDto>();
@@ -213,11 +257,11 @@ namespace Grand.Plugin.Api.Extended.Controllers
             var order = 1;
             foreach (var img in imagesUrl)
             {
-                using var response = await http.GetAsync(img);
-                response.EnsureSuccessStatusCode();
 
                 try
                 {
+                    using var response = await http.GetAsync(img);
+                    response.EnsureSuccessStatusCode();
                     var pictureBytes = await response.Content.ReadAsByteArrayAsync();
 
                     if (pictureBytes != null && pictureBytes.Length > 0)
@@ -232,7 +276,7 @@ namespace Grand.Plugin.Api.Extended.Controllers
                         if (pictureDto != null)
                         {
                             await _mediator.Send(new AddProductPictureCommand() {
-                                Product = productDto,
+                                Product = product.ToModel(),
                                 Model = new Grand.Api.DTOs.Catalog.ProductPictureDto() {
                                     DisplayOrder = order,
                                     PictureId = pictureDto.Id
@@ -251,7 +295,7 @@ namespace Grand.Plugin.Api.Extended.Controllers
 
             return _addedPictureDtos;
         }
-        private async Task<ProductDto> CreateProductAttributeMappingFromAliExpressVariants(AliExpressProduct aliExpressProduct, ProductDto productDto)
+        private async Task<Product> CreateProductAttributeMappingFromAliExpressVariants(AliExpressProduct aliExpressProduct, Product product)
         {
             // add product attributes to productDto
             var _options = aliExpressProduct.Variants.Options;
@@ -269,7 +313,7 @@ namespace Grand.Plugin.Api.Extended.Controllers
                     _productAttrId = KnownIds.PRODUCT_ATTRIBUTE_ID_COLOR;
                     _productAttrControlTypeId = AttributeControlType.ImageSquares;
                     var colorOptionImagesUrls = option.Values.Select(v => v.ImagePath).ToList();
-                    _pictureDtos = await CreatePicturesAndAddToProduct(colorOptionImagesUrls, productDto);
+                    _pictureDtos = await CreatePicturesAndAddToProduct(colorOptionImagesUrls, product);
                 }
                 // size attr mapping
                 else if (option.Name.ToLowerInvariant().Contains(KnownAliExpressAttrNames.Size))
@@ -327,10 +371,10 @@ namespace Grand.Plugin.Api.Extended.Controllers
                 }
 
                 // save mapping to database
-                var attrMapping = await SaveProductAttribute(productAttributeMappingDto, productDto.Id);
+                var attrMapping = await SaveProductAttribute(productAttributeMappingDto, product.Id);
                 _attributeMappingDisplayOrder++;
             }
-            return (await _mediator.Send(new GetQuery<ProductDto>() { Id = productDto.Id })).FirstOrDefault();
+            return await _productService.GetProductById(product.Id);
         }
 
         private async Task<ProductAttributeMappingDto> SaveProductAttribute(ProductAttributeMappingDto dto, string productId)
@@ -341,15 +385,15 @@ namespace Grand.Plugin.Api.Extended.Controllers
             return productAttributeMapping.ToModel();
         }
 
-        private async Task<ProductDto> CreateProductAttributeCombinationsFromAttributeMappings(
+        private async Task<Product> CreateProductAttributeCombinationsFromAttributeMappings(
             AliExpressProduct aliExpressProduct,
-            ProductDto productDto)
+            Product product)
         {
             var prices = aliExpressProduct.Variants.Prices;
 
             foreach (var price in prices)
             {
-                var adjustedPrice = productDto.Price + double.Parse(price.SalePrice.ToString());
+                var adjustedPrice = product.Price + double.Parse(price.SalePrice.ToString());
                 var value1 = string.IsNullOrEmpty(price.OptionValueId1) ? null : aliExpressProduct.GetOptionValueById(price.OptionValueId1);
                 var value2 = string.IsNullOrEmpty(price.OptionValueId2) ? null : aliExpressProduct.GetOptionValueById(price.OptionValueId2);
 
@@ -360,9 +404,9 @@ namespace Grand.Plugin.Api.Extended.Controllers
                 if (value1 != null)
                 {
                     valueWithImage = value1.ImagePath != null ? value1 : null;
-                    var productAttributeMappingInDto1 = productDto.ProductAttributeMappings
+                    var productAttributeMappingInDto1 = product.ProductAttributeMappings
                         .Where(p => p.ProductAttributeValues.Any(v => v.Name == value1.DisplayName)).FirstOrDefault();
-                    var productAttributeValueInDto1 = productDto.ProductAttributeMappings
+                    var productAttributeValueInDto1 = product.ProductAttributeMappings
                         .SelectMany(p => p.ProductAttributeValues).Where(v => v.Name == value1.DisplayName).FirstOrDefault();
 
                     if (productAttributeMappingInDto1 != null && productAttributeValueInDto1 != null)
@@ -380,14 +424,14 @@ namespace Grand.Plugin.Api.Extended.Controllers
                         valueWithImage = value2.ImagePath != null ? value2 : null;
                     }
 
-                    var productAttributeMappingInDto2 = productDto.ProductAttributeMappings
+                    var productAttributeMappingInDto2 = product.ProductAttributeMappings
                         .Where(p => p.ProductAttributeValues.Any(v => v.Name == value2.DisplayName)).FirstOrDefault();
-                    var productAttributeValueInDto2 = productDto.ProductAttributeMappings
+                    var productAttributeValueInDto2 = product.ProductAttributeMappings
                         .SelectMany(p => p.ProductAttributeValues).Where(v => v.Name == value2.DisplayName).FirstOrDefault();
 
-                    pictureId = valueWithImage != null ? productDto.ProductAttributeMappings
-                            .FirstOrDefault(p => p.ProductAttributeId == KnownIds.PRODUCT_ATTRIBUTE_ID_COLOR)
-                            .ProductAttributeValues.FirstOrDefault(v => v.Name == valueWithImage.DisplayName).PictureId : null;
+                    pictureId = valueWithImage != null ? product.ProductAttributeMappings
+                            .FirstOrDefault(p => p.ProductAttributeId == KnownIds.PRODUCT_ATTRIBUTE_ID_COLOR)?
+                            .ProductAttributeValues.FirstOrDefault(v => v.Name == valueWithImage.DisplayName)?.PictureId : null;
 
                     if (productAttributeMappingInDto2 != null && productAttributeValueInDto2 != null)
                     {
@@ -399,7 +443,7 @@ namespace Grand.Plugin.Api.Extended.Controllers
 
                 }
                 var combination = new ProductAttributeCombination() {
-                    PictureId = pictureId,
+                    PictureId = pictureId ?? null,
                     StockQuantity = int.Parse(price.AvailableQuantity.ToString()),
                     OverriddenPrice = adjustedPrice,
                     Attributes = customAttributes
@@ -407,10 +451,10 @@ namespace Grand.Plugin.Api.Extended.Controllers
 
                 if (combination != null)
                 {
-                    await SaveProductCombination(combination, productDto.Id);
+                    await SaveProductCombination(combination, product.Id);
                 }
             }
-            return (await _mediator.Send(new GetQuery<ProductDto>() { Id = productDto.Id })).FirstOrDefault();
+            return await _productService.GetProductById(product.Id);
         }
 
         private async Task SaveProductCombination(ProductAttributeCombination entity, string productId)

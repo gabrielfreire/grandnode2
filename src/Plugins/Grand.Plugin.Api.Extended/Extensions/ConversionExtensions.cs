@@ -1,5 +1,6 @@
 ﻿using Grand.Api.DTOs.Catalog;
 using Grand.Domain.Catalog;
+using Grand.Domain.Data;
 using Grand.Plugin.Api.Extended.Models;
 using System;
 using System.Collections.Generic;
@@ -11,10 +12,13 @@ namespace Grand.Plugin.Api.Extended.Extensions
 {
     public static class ConversionExtensions
     {
-        public static ProductDto ToProductDto(this AliExpressProduct aliExpressProduct, bool publish = false, bool showOnHomePage = false)
+        public static ProductDto ToProductDto(this AliExpressProduct aliExpressProduct, 
+            bool publish = false, 
+            bool showOnHomePage = false,
+            int displayOrder = 1)
         {
             var dto = new ProductDto();
-            
+            dto.Id = UniqueIdentifier.New;
             dto.FullDescription = aliExpressProduct.Description;
             dto.Name = aliExpressProduct.Title;
             dto.MetaTitle = aliExpressProduct.Title;
@@ -38,6 +42,7 @@ namespace Grand.Plugin.Api.Extended.Extensions
             dto.StockQuantity = int.Parse(aliExpressProduct.TotalAvailableQuantity.ToString());
             dto.DisplayStockQuantity = true;
             dto.VisibleIndividually = true;
+            dto.DisplayOrder = displayOrder;
 
             return dto;
         }

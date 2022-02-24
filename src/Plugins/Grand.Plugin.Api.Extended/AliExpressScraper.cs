@@ -1,19 +1,25 @@
-﻿using Grand.Plugin.Api.Extended.Models;
+﻿using Grand.Plugin.Api.Extended.Extensions;
+using Grand.Plugin.Api.Extended.Models;
 using PuppeteerSharp;
+using Serilog;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace Grand.Plugin.Api.Extended
 {
     public class AliExpressScraper
     {
-        public static async Task<AliExpressProduct> GetProductById(
-            decimal productId,
+        public static async Task<List<AliExpressProduct>> ListProductsByCategoryIdAndName(
+            string categoryId,
+            string categoryName,
             bool headlessBrowser = true)
         {
+            var aliExpressproducts = new List<AliExpressProduct>();
+
             await new BrowserFetcher().DownloadAsync(BrowserFetcher.DefaultRevision);
             using var browser = await Puppeteer.LaunchAsync(new LaunchOptions() {
                 Headless = headlessBrowser,
@@ -22,6 +28,76 @@ namespace Grand.Plugin.Api.Extended
             });
 
             var page = await browser.NewPageAsync();
+            await page.SetViewportAsync(new ViewPortOptions() {
+                Width = 1200,
+                Height = 800
+            });
+            await page.GoToAsync($"https://www.aliexpress.com/category/{categoryId}/{categoryName}.html");
+
+            var bodyClientHeightTask = page.EvaluateFunctionAsync<int>("() => document.body.scrollHeight");
+            var windowScrollYTask = page.EvaluateFunctionAsync<int>("() => window.scrollY");
+
+            var screenHeight = await bodyClientHeightTask;
+            var scrollY = await windowScrollYTask;
+
+            var totalHeight = 0;
+            var distance = 1000;
+
+            while (totalHeight <= screenHeight)
+            {
+                await page.EvaluateFunctionAsync($"() => window.scrollBy(0, {distance})");
+
+                screenHeight = await page.EvaluateFunctionAsync<int>("() => document.body.scrollHeight");
+                scrollY = await page.EvaluateFunctionAsync<int>("() => window.scrollY");
+
+                totalHeight += distance;
+
+                await Task.Delay(100);
+            }
+
+            var hrefs = (await page.QuerySelectorAllAsync("a._3t7zg")).Select(async a => await a.GetAttributeAsync("href")).ToList();
+            
+            var reg = new Regex(@"item\/\d+\.html");
+
+            var productIds = new List<string>();
+            foreach (var href in hrefs)
+            {
+                var productId = reg.Match(await href).Value.Replace(".html", "").Replace("item/", "");
+                
+                productIds.Add(productId);
+            }
+
+            foreach (var id in productIds)
+            {
+                Log.Information($" - Scraping product {id}");
+                try
+                {
+                    aliExpressproducts.Add(await GetProductById(decimal.Parse(id), true, page));
+                }
+                catch(Exception ex)
+                {
+                    Log.Fatal(ex, ex.ToString());
+                }
+            }
+            return aliExpressproducts;
+        }
+
+        public static async Task<AliExpressProduct> GetProductById(
+            decimal productId,
+            bool headlessBrowser = true,
+            Page page = null)
+        {
+            if (page == null)
+            {
+                await new BrowserFetcher().DownloadAsync(BrowserFetcher.DefaultRevision);
+                using var browser = await Puppeteer.LaunchAsync(new LaunchOptions() {
+                    Headless = headlessBrowser,
+                    Args = new[] { "--no-sandbox", "--disable-setuid-sandbox" },
+                    DefaultViewport = new ViewPortOptions() { IsLandscape = true }
+                });
+
+                page = await browser.NewPageAsync();
+            }
             await page.GoToAsync($"https://www.aliexpress.com/item/{productId}.html");
 
             var runParams = await page.EvaluateFunctionAsync("() => runParams");
@@ -35,21 +111,25 @@ namespace Grand.Plugin.Api.Extended
                 Id = productId,
                 Title = (string)data["titleModule"]["subject"],
                 ActionCategoryId = (decimal)data["actionModule"]["categoryId"],
-                ProductCategories = data["crossLinkModule"]["breadCrumbPathList"]
-                    .Where(l => (decimal)l["cateId"] != 0)
-                    .OrderBy(l => (decimal)l["cateId"])
-                    .Select(l => new AliProductCategory
-                    {
-                        Id = (decimal)l["cateId"],
-                        Name = (string)l["name"],
-                        Target = (string)l["target"],
-                        Url = (string)l["url"]
-                    }).ToList(),
+                ProductCategories = data["crossLinkModule"]["breadCrumbPathList"] != null ? 
+                    data["crossLinkModule"]?["breadCrumbPathList"]?
+                        .Where(l => (decimal)l["cateId"] != 0)
+                        .OrderBy(l => (decimal)l["cateId"])
+                        .Select(l => new AliProductCategory
+                        {
+                            Id = (decimal)l["cateId"],
+                            Name = (string)l["name"],
+                            Target = (string)l["target"],
+                            Url = (string)l["url"]
+                        })?.ToList() :
+                        new List<AliProductCategory>(),
                 TotalAvailableQuantity = (decimal) data["quantityModule"]["totalAvailQuantity"],
                 Orders = (decimal)data["titleModule"]["tradeCount"],
                 DescriptionUrl = descriptionUrl.ToString(),
                 Description = descriptionData,
-                Images = data["imageModule"]["imagePathList"].Select(li => (string)li).ToList(),
+                Images = data["imageModule"]["imagePathList"] != null ? 
+                    data["imageModule"]?["imagePathList"]?.Select(li => (string)li)?.ToList() :
+                    new List<string>(),
                 Shop = new AliShop
                 {
                     Name = (string)data["storeModule"]["storeName"],
@@ -89,30 +169,34 @@ namespace Grand.Plugin.Api.Extended
                 },
                 Variants = new AliProductVariant 
                 {
-                    Options = data["skuModule"]["productSKUPropertyList"].Select
-                        (d => new AliVariantOption
-                        {
-                            Id = (decimal)d["skuPropertyId"],
-                            Name = (string)d["skuPropertyName"],
-                            Values = d["skuPropertyValues"].Select(pv => new OptionValue
+                    Options = data["skuModule"]["productSKUPropertyList"] != null ? 
+                        data["skuModule"]?["productSKUPropertyList"]?.Select
+                            (d => new AliVariantOption
                             {
-                                Id = (decimal)pv["propertyValueId"],
-                                Name = (string)pv["propertyValueName"],
-                                DisplayName = (string)pv["propertyValueDisplayName"],
-                                ImagePath = (string)pv["skuPropertyImagePath"]
-                            }).ToList()
-                        }).ToList(),
-                    Prices = data["skuModule"]["skuPriceList"].Select
-                        (d => new AliVariantPrice
-                        {
-                            Id = (decimal)d["skuId"],
-                            AvailableQuantity = (decimal)d["skuVal"]["availQuantity"],
-                            OptionValueIds = (string)d["skuPropIds"],
-                            OriginalPrice = (decimal)d["skuVal"]["skuAmount"]["value"],
-                            SalePrice = d["skuVal"]["skuActivityAmount"] != null ?
-                                (decimal)d["skuVal"]["skuActivityAmount"]["value"] :
-                                (decimal)d["skuVal"]["skuAmount"]["value"]
-                        }).ToList()
+                                Id = (decimal)d["skuPropertyId"],
+                                Name = (string)d["skuPropertyName"],
+                                Values = d["skuPropertyValues"]?.Select(pv => new OptionValue
+                                {
+                                    Id = (decimal)pv["propertyValueId"],
+                                    Name = (string)pv["propertyValueName"],
+                                    DisplayName = (string)pv["propertyValueDisplayName"],
+                                    ImagePath = (string)pv["skuPropertyImagePath"]
+                                })?.ToList()
+                            })?.ToList() :
+                            new List<AliVariantOption>(),
+                    Prices = data["skuModule"]["skuPriceList"] != null ? 
+                        data["skuModule"]?["skuPriceList"]?.Select
+                            (d => new AliVariantPrice
+                            {
+                                Id = (decimal)d["skuId"],
+                                AvailableQuantity = (decimal)d["skuVal"]["availQuantity"],
+                                OptionValueIds = (string)d["skuPropIds"],
+                                OriginalPrice = (decimal)d["skuVal"]["skuAmount"]["value"],
+                                SalePrice = d["skuVal"]["skuActivityAmount"] != null ?
+                                    (decimal)d["skuVal"]["skuActivityAmount"]["value"] :
+                                    (decimal)d["skuVal"]["skuAmount"]["value"]
+                            })?.ToList() :
+                            new List<AliVariantPrice>()
 
                 }
             };
