@@ -32,9 +32,9 @@ namespace Grand.Plugin.Api.Extended.Extensions
             dto.Published = publish;
             dto.ManageInventoryMethodId = ManageInventoryMethod.ManageStockByAttributes;
             
-            dto.ProductCost = double.Parse( aliExpressProduct.OriginalPrice.Min.ToString() );
-            dto.Price = double.Parse( aliExpressProduct.OriginalPrice.Min.ToString() );
-            dto.CatalogPrice = double.Parse(aliExpressProduct.SalePrice.Min.ToString() );
+            dto.ProductCost = double.Parse( aliExpressProduct.SalePrice.Min.ToString() );
+            dto.Price = double.Parse( aliExpressProduct.SalePrice.Min.ToString() );
+            dto.CatalogPrice = double.Parse(aliExpressProduct.OriginalPrice.Min.ToString() );
             dto.MinEnteredPrice = double.Parse(aliExpressProduct.SalePrice.Min.ToString());
             dto.MaxEnteredPrice = double.Parse(aliExpressProduct.SalePrice.Max.ToString());
             dto.StartPrice = double.Parse(aliExpressProduct.OriginalPrice.Min.ToString());
@@ -42,6 +42,7 @@ namespace Grand.Plugin.Api.Extended.Extensions
             dto.StockQuantity = int.Parse(aliExpressProduct.TotalAvailableQuantity.ToString());
             dto.DisplayStockQuantity = true;
             dto.VisibleIndividually = true;
+            
             dto.DisplayOrder = displayOrder;
 
             return dto;

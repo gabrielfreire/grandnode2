@@ -75,15 +75,13 @@ namespace Grand.Plugin.Api.Extended.Controllers
         [ProducesResponseType((int)HttpStatusCode.Forbidden)]
         [ProducesResponseType((int)HttpStatusCode.OK)]
         public async Task<IActionResult> AddAliExpressProductsByCategoryIdAndName(
-            [FromQuery] string categoryId,
-            [FromQuery] string categoryName,
-            [FromQuery] bool publish = false
+            [FromBody] AddAliExpressProductsByCategoryIdAndNameRequestBody body
             )
         {
             if (!await _permissionService.Authorize(PermissionSystemName.Orders))
                 return Forbid();
 
-            var aliExpressProducts = await AliExpressScraper.ListProductsByCategoryIdAndName(categoryId, categoryName);
+            var aliExpressProducts = await AliExpressScraper.ListProductsByCategoryIdAndName(body.AliCategoryId, body.AliCategoryName);
 
             var products = new List<Product>();
             var displayOrder = 1;
@@ -94,8 +92,13 @@ namespace Grand.Plugin.Api.Extended.Controllers
                 {
                     var p = await CreateProductFromAliExpressProduct(
                             aliProd,
-                            publish,
-                            false,
+                            body.PublishProducts,
+                            body.PublishCategory,
+                            body.ShowOnHomePage,
+                            body.AllowCustomerToSelectPageSize,
+                            body.IncludeInMenu,
+                            body.PageSize,
+                            body.PageSizeOption,
                             displayOrder,
                             new string[] { });
                     
@@ -140,7 +143,12 @@ namespace Grand.Plugin.Api.Extended.Controllers
             var product = await CreateProductFromAliExpressProduct(
                 aliExpressProduct, 
                 publish, 
-                showOnHomePage, 
+                true,
+                showOnHomePage,
+                true,
+                true,
+                10,
+                "10,15,20",
                 displayOrder, 
                 categoriesId);
 
@@ -149,12 +157,17 @@ namespace Grand.Plugin.Api.Extended.Controllers
 
         private async Task<Product> CreateProductFromAliExpressProduct(
             AliExpressProduct aliExpressProduct, 
-            bool publish, 
+            bool publishProduct, 
+            bool publishCategory, 
             bool showOnHomePage, 
+            bool allowCustomersToSelectPageSize,
+            bool IncludeInMenu,
+            int pageSize,
+            string pageSizeOptions,
             int displayOrder, 
             string[] categoriesId)
         {
-            var productDto = aliExpressProduct.ToProductDto(publish, showOnHomePage, displayOrder);
+            var productDto = aliExpressProduct.ToProductDto(publishProduct, showOnHomePage, displayOrder);
             productDto = await _mediator.Send(new AddProductCommand() {
                 Model = productDto
             });
@@ -163,7 +176,14 @@ namespace Grand.Plugin.Api.Extended.Controllers
             if (product != null)
             {
                 // add aliexpress categories to store and insert them into the product
-                product = await CreateCategoriesAndAddToProduct(aliExpressProduct, categoriesId, product);
+                product = await CreateCategoriesAndAddToProduct(aliExpressProduct, 
+                    categoriesId, 
+                    product,
+                    publishCategory,
+                    allowCustomersToSelectPageSize,
+                    IncludeInMenu,
+                    pageSize,
+                    pageSizeOptions);
                 
                 // add User fields
                 product.UserFields.Add(new Domain.Common.UserField() {
@@ -188,7 +208,15 @@ namespace Grand.Plugin.Api.Extended.Controllers
             }
             return product;
         }
-        private async Task<Product> CreateCategoriesAndAddToProduct(AliExpressProduct aliExpressProduct, string[] categoriesId, Product product)
+        private async Task<Product> CreateCategoriesAndAddToProduct(
+            AliExpressProduct aliExpressProduct, 
+            string[] categoriesId, 
+            Product product,
+            bool publishCategories,
+            bool allowCustomersToSelectPageSize,
+            bool IncludeInMenu,
+            int pageSize,
+            string pageSizeOptions)
         {
             // category creation
             if (categoriesId.Length == 0)
@@ -199,12 +227,20 @@ namespace Grand.Plugin.Api.Extended.Controllers
                 foreach (var aliProdCategory in aliExpressProduct.ProductCategories)
                 {
 
-                    var existingCategory = await _mediator.Send(new GetQuery<CategoryDto>());
-                    if (existingCategory.Any(c => c.Name == aliProdCategory.Name))
+                    var categoriesQuery = await _mediator.Send(new GetQuery<CategoryDto>());
+                    if (categoriesQuery.Any(c => c.ExternalId == aliProdCategory.Id.ToString()))
                     {
-                        if (aliProdCategory.Name == aliExpressProduct.ProductCategories.Last().Name)
+                        var existingCategory = categoriesQuery.FirstOrDefault(c => c.ExternalId == aliProdCategory.Id.ToString());
+
+                        // is it the last?
+                        if (existingCategory.ExternalId == aliExpressProduct.ProductCategories.Last().Id.ToString())
                         {
-                            categoriesToAdd.Add(existingCategory.FirstOrDefault(c => c.Name == aliProdCategory.Name).Id);
+                            categoriesToAdd.Add(categoriesQuery.FirstOrDefault(c => c.ExternalId == aliProdCategory.Id.ToString()).Id);
+                        }
+                        else // skip if not
+                        {
+                            parentCategoryId = existingCategory.Id;
+                            continue;
                         }
                     }
                     else
@@ -214,11 +250,16 @@ namespace Grand.Plugin.Api.Extended.Controllers
                                 Name = aliProdCategory.Name,
                                 ParentCategoryId = parentCategoryId,
                                 CategoryLayoutId = KnownIds.CATEGORY_LAYOUT_GRID_OR_LINES,
-                                Published = true,
+                                Published = publishCategories,
                                 DisplayOrder = 1,
+                                PageSize = pageSize,
+                                PictureId = product.ProductPictures.FirstOrDefault()?.PictureId,
+                                ShowOnSearchBox = true,
+                                AllowCustomersToSelectPageSize = allowCustomersToSelectPageSize,
+                                PageSizeOptions = pageSizeOptions,
                                 ExternalId = aliProdCategory.Id.ToString(),
                                 FeaturedProductsOnHomePage = false,
-                                IncludeInMenu = true
+                                IncludeInMenu = IncludeInMenu
                             }
                         });
 
@@ -373,7 +414,6 @@ namespace Grand.Plugin.Api.Extended.Controllers
                     attrValueDto.DisplayOrder = _optionValueDisplayOrder;
                     attrValueDto.PriceAdjustment = optionValuePrice == null ? default : double.Parse(optionValuePrice.SalePrice.ToString());
                     attrValueDto.Quantity = optionValuePrice == null ? 1 : int.Parse( optionValuePrice.AvailableQuantity.ToString() );
-                    
                     productAttributeMappingDto.ProductAttributeValues.Add(attrValueDto);
 
                     _optionValueDisplayOrder++;
@@ -403,7 +443,7 @@ namespace Grand.Plugin.Api.Extended.Controllers
 
             foreach (var price in prices)
             {
-                var adjustedPrice = product.Price + double.Parse(price.SalePrice.ToString());
+                var adjustedPrice = double.Parse(price.SalePrice.ToString());
                 
                 var optionsId = !string.IsNullOrEmpty(price.OptionValueIds) ? price.OptionValueIds.Split(",") : new string[] { };
                 
@@ -455,10 +495,5 @@ namespace Grand.Plugin.Api.Extended.Controllers
         {
             await _productAttributeService.InsertProductAttributeCombination(entity, productId);
         }
-        
-
-        
-
-        
     }
 }
