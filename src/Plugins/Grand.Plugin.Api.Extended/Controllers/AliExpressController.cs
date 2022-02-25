@@ -421,7 +421,7 @@ namespace Grand.Plugin.Api.Extended.Controllers
                     {
                         var pictureId = value.ImagePath != null ? value.ImagePath : null;
                         var productAttributeMappingInDto = product.ProductAttributeMappings
-                            .Where(p => p.ProductAttributeValues.Any(v => v.Name == value.DisplayName)).FirstOrDefault();
+                            .FirstOrDefault(p => p.ProductAttributeValues.Any(v => v.Name == value.DisplayName));
                         
                         if (productAttributeMappingInDto != null)
                         {
