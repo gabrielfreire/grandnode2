@@ -86,19 +86,24 @@ namespace Grand.Plugin.Api.Extended.Controllers
             var aliExpressProducts = await AliExpressScraper.ListProductsByCategoryIdAndName(categoryId, categoryName);
 
             var products = new List<Product>();
-
+            var displayOrder = 1;
             foreach(var aliProd in aliExpressProducts)
             {
                 Log.Information($"Adding AliExpress prod '{aliProd.Title}' to store");
                 try
                 {
-                    products.Add(
-                        await CreateProductFromAliExpressProduct(
+                    var p = await CreateProductFromAliExpressProduct(
                             aliProd,
                             publish,
                             false,
-                            1, 
-                            new string[]{ }));
+                            displayOrder,
+                            new string[] { });
+                    
+                    if (p != null)
+                    {
+                        products.Add(p);
+                        displayOrder++;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -132,7 +137,12 @@ namespace Grand.Plugin.Api.Extended.Controllers
             var aliExpressProduct = await AliExpressScraper.GetProductById(decimal.Parse(aliExpressProductId));
             
             // convert to productDto and add to database
-            var product = await CreateProductFromAliExpressProduct(aliExpressProduct, publish, showOnHomePage, displayOrder, categoriesId);
+            var product = await CreateProductFromAliExpressProduct(
+                aliExpressProduct, 
+                publish, 
+                showOnHomePage, 
+                displayOrder, 
+                categoriesId);
 
             return Ok(product.ToModel());
         }
@@ -165,7 +175,7 @@ namespace Grand.Plugin.Api.Extended.Controllers
                     Value = $"{aliExpressProduct.Id}"
                 });
 
-                await _productService.UpdateProduct((Product)product);
+                await _productService.UpdateProduct(product);
 
                 // create pictures and add to productDto
                 await CreatePicturesAndAddToProduct(aliExpressProduct.Images, product);
@@ -257,39 +267,39 @@ namespace Grand.Plugin.Api.Extended.Controllers
             var order = 1;
             foreach (var img in imagesUrl)
             {
-
+                byte[] pictureBytes = null;
                 try
                 {
                     using var response = await http.GetAsync(img);
                     response.EnsureSuccessStatusCode();
-                    var pictureBytes = await response.Content.ReadAsByteArrayAsync();
+                    pictureBytes = await response.Content.ReadAsByteArrayAsync();
+                }
+                catch (Exception ex)
+                {
+                    Log.Fatal(ex, ex.ToString());
+                }
 
-                    if (pictureBytes != null && pictureBytes.Length > 0)
+                if (pictureBytes != null && pictureBytes.Length > 0)
+                {
+                    var pictureDto = await _mediator.Send(new AddPictureCommand() {
+                        PictureDto = new Grand.Api.DTOs.Common.PictureDto() {
+                            PictureBinary = pictureBytes,
+                            AltAttribute = img,
+                            MimeType = "image/jpeg"
+                        }
+                    });
+                    if (pictureDto != null)
                     {
-                        var pictureDto = await _mediator.Send(new AddPictureCommand() {
-                            PictureDto = new Grand.Api.DTOs.Common.PictureDto() {
-                                PictureBinary = pictureBytes,
-                                AltAttribute = img,
-                                MimeType = "image/jpeg"
+                        await _mediator.Send(new AddProductPictureCommand() {
+                            Product = product.ToModel(),
+                            Model = new Grand.Api.DTOs.Catalog.ProductPictureDto() {
+                                DisplayOrder = order,
+                                PictureId = pictureDto.Id
                             }
                         });
-                        if (pictureDto != null)
-                        {
-                            await _mediator.Send(new AddProductPictureCommand() {
-                                Product = product.ToModel(),
-                                Model = new Grand.Api.DTOs.Catalog.ProductPictureDto() {
-                                    DisplayOrder = order,
-                                    PictureId = pictureDto.Id
-                                }
-                            });
-                            _addedPictureDtos.Add(pictureDto);
-                            order++;
-                        }
+                        _addedPictureDtos.Add(pictureDto);
+                        order++;
                     }
-
-                }
-                catch (Exception ex) {
-                    Log.Fatal(ex, ex.ToString());
                 }
             }
 
@@ -394,60 +404,44 @@ namespace Grand.Plugin.Api.Extended.Controllers
             foreach (var price in prices)
             {
                 var adjustedPrice = product.Price + double.Parse(price.SalePrice.ToString());
-                var value1 = string.IsNullOrEmpty(price.OptionValueId1) ? null : aliExpressProduct.GetOptionValueById(price.OptionValueId1);
-                var value2 = string.IsNullOrEmpty(price.OptionValueId2) ? null : aliExpressProduct.GetOptionValueById(price.OptionValueId2);
-
-
-                var customAttributes = new List<CustomAttribute>();
-                string pictureId = null;
-                OptionValue valueWithImage = null;
-                if (value1 != null)
-                {
-                    valueWithImage = value1.ImagePath != null ? value1 : null;
-                    var productAttributeMappingInDto1 = product.ProductAttributeMappings
-                        .Where(p => p.ProductAttributeValues.Any(v => v.Name == value1.DisplayName)).FirstOrDefault();
-                    var productAttributeValueInDto1 = product.ProductAttributeMappings
-                        .SelectMany(p => p.ProductAttributeValues).Where(v => v.Name == value1.DisplayName).FirstOrDefault();
-
-                    if (productAttributeMappingInDto1 != null && productAttributeValueInDto1 != null)
-                    {
-                        customAttributes.Add(new CustomAttribute() {
-                            Key = productAttributeMappingInDto1.Id,
-                            Value = productAttributeValueInDto1.Id
-                        });
-                    }
-                }
-                if (value2 != null)
-                {
-                    if (valueWithImage == null)
-                    {
-                        valueWithImage = value2.ImagePath != null ? value2 : null;
-                    }
-
-                    var productAttributeMappingInDto2 = product.ProductAttributeMappings
-                        .Where(p => p.ProductAttributeValues.Any(v => v.Name == value2.DisplayName)).FirstOrDefault();
-                    var productAttributeValueInDto2 = product.ProductAttributeMappings
-                        .SelectMany(p => p.ProductAttributeValues).Where(v => v.Name == value2.DisplayName).FirstOrDefault();
-
-                    pictureId = valueWithImage != null ? product.ProductAttributeMappings
-                            .FirstOrDefault(p => p.ProductAttributeId == KnownIds.PRODUCT_ATTRIBUTE_ID_COLOR)?
-                            .ProductAttributeValues.FirstOrDefault(v => v.Name == valueWithImage.DisplayName)?.PictureId : null;
-
-                    if (productAttributeMappingInDto2 != null && productAttributeValueInDto2 != null)
-                    {
-                        customAttributes.Add(new CustomAttribute() {
-                            Key = productAttributeMappingInDto2.Id,
-                            Value = productAttributeValueInDto2.Id
-                        });
-                    }
-
-                }
+                
+                var optionsId = !string.IsNullOrEmpty(price.OptionValueIds) ? price.OptionValueIds.Split(",") : new string[] { };
+                
                 var combination = new ProductAttributeCombination() {
-                    PictureId = pictureId ?? null,
+                    PictureId = null,
                     StockQuantity = int.Parse(price.AvailableQuantity.ToString()),
                     OverriddenPrice = adjustedPrice,
-                    Attributes = customAttributes
+                    Attributes = new List<CustomAttribute>()
                 };
+                
+                foreach(var optionId in optionsId)
+                {
+                    var value = aliExpressProduct.GetOptionValueById(optionId);
+                    if (value != null)
+                    {
+                        var pictureId = value.ImagePath != null ? value.ImagePath : null;
+                        var productAttributeMappingInDto = product.ProductAttributeMappings
+                            .Where(p => p.ProductAttributeValues.Any(v => v.Name == value.DisplayName)).FirstOrDefault();
+                        
+                        if (productAttributeMappingInDto != null)
+                        {
+                            var productAttributeValueInDto = productAttributeMappingInDto.ProductAttributeValues
+                                .FirstOrDefault(v => v.Name == value.DisplayName);
+
+                            if (productAttributeValueInDto != null)
+                            {
+                                if (productAttributeMappingInDto.AttributeControlTypeId == AttributeControlType.ImageSquares)
+                                {
+                                    combination.PictureId = productAttributeValueInDto.PictureId;
+                                }
+                                combination.Attributes.Add(new CustomAttribute() {
+                                    Key = productAttributeMappingInDto.Id,
+                                    Value = productAttributeValueInDto.Id
+                                });
+                            }
+                        }
+                    }
+                }
 
                 if (combination != null)
                 {

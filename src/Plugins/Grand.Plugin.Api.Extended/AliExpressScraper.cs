@@ -55,14 +55,18 @@ namespace Grand.Plugin.Api.Extended
                 await Task.Delay(100);
             }
 
-            var hrefs = (await page.QuerySelectorAllAsync("a._3t7zg")).Select(async a => await a.GetAttributeAsync("href")).ToList();
+            var hrefs = (await page.QuerySelectorAllAsync("a._3t7zg"))
+                .Select(async a => await a.GetAttributeAsync("href"))
+                .ToList();
             
             var reg = new Regex(@"item\/\d+\.html");
 
             var productIds = new List<string>();
             foreach (var href in hrefs)
             {
-                var productId = reg.Match(await href).Value.Replace(".html", "").Replace("item/", "");
+                var productId = reg.Match(await href).Value
+                    .Replace(".html", "")
+                    .Replace("item/", "");
                 
                 productIds.Add(productId);
             }
