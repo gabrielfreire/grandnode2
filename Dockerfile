@@ -10,6 +10,7 @@ RUN dotnet build /app/Plugins/Authentication.Facebook -c Release
 RUN dotnet build /app/Plugins/Authentication.Google -c Release
 RUN dotnet build /app/Plugins/DiscountRules.Standard -c Release
 RUN dotnet build /app/Plugins/ExchangeRate.McExchange -c Release
+RUN dotnet build /app/Plugins/Grand.Plugin.Api.Extended -c Release
 RUN dotnet build /app/Plugins/Payments.BrainTree -c Release
 RUN dotnet build /app/Plugins/Payments.CashOnDelivery -c Release
 RUN dotnet build /app/Plugins/Payments.PayPalStandard -c Release
