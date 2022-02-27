@@ -70,6 +70,32 @@ namespace Grand.Plugin.Api.Extended.Controllers
             return Ok(product);
         }
 
+        /*
+         * login to get api token
+         * {
+              "email": "gabrielfreiredev@gmail.com",
+              "password": "cGFzc3dvcmR0ZXN0"
+            }
+         * */
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <remarks>
+        /// {
+        ///     "aliCategoryId": "200002071",
+        ///     "aliCategoryName": "cat-supplies",
+        ///     "publishCategory": true,
+        ///     "publishProducts": true,
+        ///     "includeInMenu": true,
+        ///     "showOnHomePage": false,
+        ///     "allowCustomerToSelectPageSize": true,
+        ///     "pageSize": 10,
+        ///     "pageSizeOption": "10,20,30"
+        /// }
+        /// </remarks>
+        /// <param name="body"></param>
+        /// <returns></returns>
         [SwaggerOperation(summary: "Adds a bunch of products from AliExpress to the Store by category id and name", OperationId = "AddAliExpressProductsByCategoryIdAndName")]
         [HttpPost("Products/AddAliExpressProductsByCategoryIdAndName")]
         [ProducesResponseType((int)HttpStatusCode.Forbidden)]

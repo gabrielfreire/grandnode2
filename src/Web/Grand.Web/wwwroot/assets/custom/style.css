@@ -1,1 +1,21 @@
-﻿
+﻿/* my custom style */
+.qty-indicator {
+    background: #cfa418;
+}
+[dark-theme="true"] .qty-indicator {
+    background: #ffdc6b;
+    color: #4e3d04;
+}
+
+.header-nav .text-info {
+    color: #cfa418 !important
+}
+.bg-info {
+    background-color: #d3b75c !important;
+}
+a {
+  color: #83723d;
+}
+[dark-theme="true"] a {
+    color: #d3b75c;
+}

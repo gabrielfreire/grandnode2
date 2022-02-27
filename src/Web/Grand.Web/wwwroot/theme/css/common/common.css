@@ -1523,14 +1523,14 @@ footer .list-group-item span:last-child {
 }
 .contrast-switch .custom-control-label::before {
     border-width: 2px;
-    border-color: #1FB0C7;
+    border-color: #cfa418;
 }
 .contrast-switch.custom-switch .custom-control-label::after {
     background-color: #fff;
 }
 .contrast-switch .custom-control-input:checked ~ .custom-control-label::before {
-    background-color: #1FB0C7;
-    border-color: #1FB0C7;
+    background-color: #ffdc6b;
+    border-color: #ffdc6b;
 }
 .contrast-switch .b-icon.light {
     visibility: visible;
@@ -1563,7 +1563,7 @@ footer .list-group-item span:last-child {
     background-color: #2d3133;
 }
 [dark-theme="true"] .text-info {
-    color: #1FB0C7 !important;
+    color: #cfa418 !important
 }
 [dark-theme="true"] a.text-info:focus, [dark-theme="true"] a.text-info:hover, [dark-theme="true"] .list-group-item-action:focus, [dark-theme="true"] .list-group-item-action:hover {
     color: #42C0D1 !important;

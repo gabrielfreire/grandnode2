@@ -28,7 +28,7 @@
     height: 18px;
     color: #fff;
     font-size: 12px;
-    background: #0E606C;
+    background: #cfa418;
     border-radius: 100%;
 }
 .b-sidebar-header {
@@ -205,7 +205,8 @@
     color: #fff;
 }
 [dark-theme="true"] .qty-indicator {
-    background: #1FB0C7;
+    background: #ffdc6b;
+    color: #4e3d04;
 }
 [dark-theme="true"] .sidebar-cart .item img {
     background-color: #2d3133;
