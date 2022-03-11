@@ -25,6 +25,7 @@ using Grand.Api.Extensions;
 using Grand.Domain.Common;
 using Serilog;
 using Grand.Business.Catalog.Interfaces.Categories;
+using System.Diagnostics;
 
 namespace Grand.Plugin.Api.Extended.Controllers
 {
@@ -107,6 +108,15 @@ namespace Grand.Plugin.Api.Extended.Controllers
             if (!await _permissionService.Authorize(PermissionSystemName.Orders))
                 return Forbid();
 
+            if (body == null)
+                return BadRequest();
+
+            if (string.IsNullOrEmpty(body.AliCategoryId))
+                return BadRequest();
+            
+            if (string.IsNullOrEmpty(body.AliCategoryName))
+                return BadRequest();
+
             var aliExpressProducts = await AliExpressScraper.ListProductsByCategoryIdAndName(body.AliCategoryId, body.AliCategoryName);
 
             var products = new List<Product>();
@@ -136,7 +146,8 @@ namespace Grand.Plugin.Api.Extended.Controllers
                 }
                 catch (Exception ex)
                 {
-                    Log.Fatal(ex, ex.ToString());
+                    Debug.WriteLine(ex.ToString());
+                    Log.Fatal(ex, ex.Message);
                 }
             }
 
@@ -194,9 +205,16 @@ namespace Grand.Plugin.Api.Extended.Controllers
             string[] categoriesId)
         {
             var productDto = aliExpressProduct.ToProductDto(publishProduct, showOnHomePage, displayOrder);
+
+            var productQuery = await _mediator.Send(new GetQuery<ProductDto>());
+
+            if (productQuery.Any(p => p.Name == productDto.Name))
+                throw new InvalidOperationException($"Product '{productDto.Name}' already exists");
+
             productDto = await _mediator.Send(new AddProductCommand() {
                 Model = productDto
             });
+
             var product = productDto.ToEntity();
 
             if (product != null)

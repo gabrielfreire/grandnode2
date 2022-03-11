@@ -4,6 +4,7 @@ using PuppeteerSharp;
 using Serilog;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -80,7 +81,8 @@ namespace Grand.Plugin.Api.Extended
                 }
                 catch(Exception ex)
                 {
-                    Log.Fatal(ex, ex.ToString());
+                    Debug.WriteLine(ex.ToString());
+                    Log.Fatal(ex, ex.Message);
                 }
             }
             return aliExpressproducts;
